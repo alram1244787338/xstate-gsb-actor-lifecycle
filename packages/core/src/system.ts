@@ -122,7 +122,19 @@ export function createSystem<T extends ActorSystemInfo>(
       const scheduledEventId = createScheduledEventId(source, id);
       system._snapshot._scheduledEvents[scheduledEventId] = scheduledEvent;
 
+      // cancel the previously scheduled event with the same id (if any)
+      // so that re-scheduling atomically replaces it
+      const existingTimeout = timerMap[scheduledEventId];
+      if (existingTimeout !== undefined) {
+        clock.clearTimeout(existingTimeout);
+      }
+
       const timeout = clock.setTimeout(() => {
+        // a stale timeout (replaced by a newer schedule with the same id)
+        // must not deliver its event nor clear the newer event's records
+        if (timerMap[scheduledEventId] !== timeout) {
+          return;
+        }
         delete timerMap[scheduledEventId];
         delete system._snapshot._scheduledEvents[scheduledEventId];
 
