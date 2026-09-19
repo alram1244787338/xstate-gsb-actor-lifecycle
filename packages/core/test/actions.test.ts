@@ -3743,6 +3743,110 @@ describe('cancel', () => {
     expect(spy.mock.calls.length).toBe(0);
   });
 
+  it('should replace a pending delayed event when scheduling a new one with the same id', async () => {
+    const spy = vi.fn();
+
+    const machine = createMachine({
+      on: {
+        SCHEDULE_FIRST: {
+          actions: raise({ type: 'STALE' }, { delay: 50, id: 'myId' })
+        },
+        SCHEDULE_SECOND: {
+          actions: raise({ type: 'FRESH' }, { delay: 100, id: 'myId' })
+        },
+        STALE: {
+          actions: () => spy('STALE')
+        },
+        FRESH: {
+          actions: () => spy('FRESH')
+        }
+      }
+    });
+
+    const actor = createActor(machine).start();
+
+    actor.send({ type: 'SCHEDULE_FIRST' });
+    actor.send({ type: 'SCHEDULE_SECOND' });
+
+    await sleep(75);
+
+    // The first scheduled event was replaced, so it must not be delivered
+    expect(spy).not.toHaveBeenCalled();
+
+    await sleep(50);
+
+    // The second scheduled event is delivered exactly once
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith('FRESH');
+  });
+
+  it('should be possible to cancel a rescheduled delayed event', async () => {
+    const spy = vi.fn();
+
+    const machine = createMachine({
+      on: {
+        SCHEDULE: {
+          actions: raise({ type: 'RAISED' }, { delay: 50, id: 'myId' })
+        },
+        RESCHEDULE: {
+          actions: raise({ type: 'RAISED' }, { delay: 100, id: 'myId' })
+        },
+        CANCEL: {
+          actions: cancel('myId')
+        },
+        RAISED: {
+          actions: spy
+        }
+      }
+    });
+
+    const actor = createActor(machine).start();
+
+    actor.send({ type: 'SCHEDULE' });
+    actor.send({ type: 'RESCHEDULE' });
+    actor.send({ type: 'CANCEL' });
+
+    await sleep(150);
+
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('should not replace a delayed event with the same id scheduled by a different actor', async () => {
+    const fooSpy = vi.fn();
+    const barSpy = vi.fn();
+
+    const machine = createMachine({
+      invoke: [
+        {
+          id: 'foo',
+          src: createMachine({
+            id: 'foo',
+            entry: raise({ type: 'event' }, { id: 'sameId', delay: 100 }),
+            on: {
+              event: { actions: fooSpy }
+            }
+          })
+        },
+        {
+          id: 'bar',
+          src: createMachine({
+            id: 'bar',
+            entry: raise({ type: 'event' }, { id: 'sameId', delay: 100 }),
+            on: {
+              event: { actions: barSpy }
+            }
+          })
+        }
+      ]
+    });
+    createActor(machine).start();
+
+    await sleep(150);
+
+    expect(fooSpy).toHaveBeenCalledTimes(1);
+    expect(barSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('should be able to cancel a just scheduled delayed event to a just invoked child', async () => {
     const spy = vi.fn();
 
